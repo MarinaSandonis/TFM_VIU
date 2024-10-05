@@ -1,0 +1,114 @@
+# Imports necesarios
+import tensorflow as tf
+import pandas as pd
+from my_data_generator import DataGenerator
+from VAE import ConvAutoencoder
+import optuna
+import random
+from tensorflow.keras import backend as K
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+
+
+from tensorflow.python.client import device_lib
+print(device_lib.list_local_devices())
+
+from tensorflow.python.framework.ops import disable_eager_execution
+disable_eager_execution()
+
+#Hyper-parameters
+input_dim = (128, 128, 1)
+sess = tf.function()
+batch_size = 8
+is_training = True
+
+# Se crean los generadores de datos
+train_path = 'C:\\Users\\MARINASANDONIS\\Desktop\\VIU\\TFM\\Code\\n1_preprocesado\\train_val_list.txt'
+df_train = pd.read_csv(train_path, header=None, names=['ImageID'])
+
+semilla = 42  
+random.seed(semilla)
+num_muestras = round(0.2 * len(df_train))
+idx_val = random.sample(range(0, len(df_train)), num_muestras)
+todos_index = set(range(1, len(df_train)))
+numeros_seleccionados_set = set(idx_val)
+numeros_no_seleccionados = todos_index - numeros_seleccionados_set
+idx_train = list(numeros_no_seleccionados)
+print('Training data: ', len(idx_train), ' Validation data: ', len(idx_val))
+
+# Fase de entrenamiento
+if is_training:
+  # Cargador de datos training
+  train_generator = DataGenerator(df_train.iloc[idx_train],
+                                  input_dim[1], 
+                                  input_dim[0], 
+                                  input_dim[2], 
+                                  batch_size=batch_size, 
+                                  path_to_img='C:\\Users\\MARINASANDONIS\\Desktop\\VIU\\TFM\\Code\\n1_preprocesado\\Images',
+                                  shuffle = True) 
+  
+ 
+  # Cargador de datos validation
+  val_generator = DataGenerator(df_train.iloc[idx_val],
+                                  input_dim[1], 
+                                  input_dim[0],
+                                  input_dim[2],
+                                  batch_size=batch_size, 
+                                  path_to_img='C:\\Users\\MARINASANDONIS\\Desktop\\VIU\\TFM\\Code\\n1_preprocesado\\Images', 
+                                  shuffle = False)
+
+
+
+
+  # Objective function to optimize by OPTUNA
+  def objective(trial):
+    tf.keras.backend.clear_session()
+    optimizer = trial.suggest_categorical("optimizer", ["Adam", "Adamax", "AdamW"])
+    layers_num =trial.suggest_int("layers_num", 2,6,step=1)
+    z_dim = trial.suggest_int("z_dim", 50,250, step=50)
+    dropout_rate = trial.suggest_float("dropout_prob", 0.0, 0.7,step=0.1)
+    beta_values = trial.suggest_float("beta", 0.1, 5) # Si entrenamos una VAE este parámetro tiene que tener valor 1 
+    lr_rate = trial.suggest_float("lr_prob", 1e-5, 1e-3, log=True)
+    num_filters = trial.suggest_categorical("num_filters", [8,16,32])
+    stride_size = 2
+    size_kernel = 3
+
+    my_CAE = ConvAutoencoder(input_dim,
+                          layers_num,
+                          stride_size,
+                          z_dim,
+                          dropout_rate,
+                          size_kernel,
+                          num_filters) #z_dim = dimensionalidad del espacio latente
+
+    my_CAE.build(use_batch_norm=True, use_dropout=True)
+
+    my_CAE.compile(learning_rate=lr_rate, r_loss_factor=1, optimizer_name = optimizer, beta = beta_values)
+
+    history = my_CAE.train(data_flow = train_generator, 
+                        epochs=100, 
+                        steps_per_epoch= len(train_generator),
+                        data_flow_val = val_generator)
+    
+    K.clear_session() 
+    
+    return history.history["val_loss"][-1]
+  
+  study = optuna.create_study(direction="minimize")
+  study.optimize(objective, n_trials=15)
+
+  print("Number of finished trials: {}".format(len(study.trials)))
+
+  print("Best trial:")
+  trial = study.best_trial
+
+  print("  Value: {}".format(trial.value))
+
+  print("  Params: ")
+  for key, value in trial.params.items():
+      print("    {}: {}".format(key, value))
+
+
+# Create final model with the best hyperparams
+print('Best hyperparams found by Optuna: \n', study.best_params)
+
+  
