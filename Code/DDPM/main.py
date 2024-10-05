@@ -160,7 +160,7 @@ def objective(trial):
     return history.history["val_loss"][-1]
   
 study = optuna.create_study(direction="minimize")
-study.optimize(objective, n_trials=9, callbacks=[save_trial_info])
+study.optimize(objective, n_trials=15, callbacks=[save_trial_info])
 
 print("Number of finished trials: {}".format(len(study.trials)))
 
